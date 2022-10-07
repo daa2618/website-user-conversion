@@ -1,0 +1,215 @@
+---
+title: "website-user-conversion"
+author: "Dev"
+date: '2022-10-07'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+```{r}
+# loading the required packages
+library(tidyverse) # for data wrangling and visualization
+library(ggpubr)
+library(ggmosaic)
+library(broom) # for tidy model output
+library(forestmangr) # for convenient rounding
+library(pROC)
+```
+
+## Data
+
+```{r}
+# reading the data
+ecommerce <- read.csv("ecommerce.csv")
+
+```
+
+## Inspecting the data
+
+```{r}
+glimpse (ecommerce)
+summary (ecommerce)
+glimpse(ecommerce$country)
+
+# Converting variables to factors
+ecommerce <- ecommerce %>% 
+  mutate (discount = factor(discount) , 
+          conversion = factor (conversion) ,
+          source = factor (source) , 
+          country = factor(country))
+ecommerce
+summary (ecommerce)
+
+glimpse (ecommerce)
+```
+
+
+## Simple logistic regression
+```{r}
+m1 <- glm (conversion ~ discount , data = ecommerce , family = binomial)
+summary (m1)
+
+# Calculating the odds ratio odds ratio 
+exp(coef(m1))
+
+# Calculating the 95% confidence interval for the odds ratio
+exp (confint(m1))
+
+# table of conversion by source
+table (ecommerce$conversion , ecommerce$source)
+```
+
+
+## Data visualisation
+```{r}
+# Mosaic plot
+ggplot (data = ecommerce) +
+  geom_mosaic (aes ( 
+    x = product (discount) ,
+    fill = conversion) ,
+    offset = 0.02 ,
+    divider = ddecker ()) +
+  facet_grid(~ source ,
+             scales = "free") +
+  theme_pubr () +
+  theme (axis.text.y = element_blank() ,
+         axis.ticks.y = element_blank() ,
+         axis.text.x = element_text(angle = 90)) +
+  labs (x = "" , y = "")
+
+```
+
+## Logistic regression model with source
+```{r}
+m2 <- glm (conversion ~ discount + source , data = ecommerce , family = binomial)
+summary(m2)
+
+# Odds ratios
+exp (coef (m2))
+```
+
+## Model with discount, source and interaction
+```{r}
+m3 <- glm (conversion ~ 
+             discount +
+             source +
+             discount:source ,
+           data = ecommerce ,
+           family = binomial)
+summary (m3)
+
+# Odds ratios
+exp (coef (m3))
+# Calculating the 95% confidence interval for the odds ratio
+exp (confint(m3))
+```
+
+## Model with all the variables
+```{r}
+m4 <- glm (conversion ~ 
+             discount +
+             source +
+             total_pages_visited +
+             visit_duration +
+             country +
+             discount:source ,
+           data = ecommerce ,
+           family = binomial)
+summary (m4)
+```
+
+## Model with visit_duration removed
+```{r}
+m5 <- glm (conversion ~ 
+             discount +
+             source +
+             total_pages_visited +
+             country +
+             discount:source ,
+           data = ecommerce ,
+           family = binomial)
+summary (m5)
+```
+
+## Visualising model 5
+```{r}
+# visualize the odds ratios (as points) as well as their confidence intervals (error bars).
+tidy(m5) %>% # tidy function from broom package
+  mutate(exp_beta_llci = exp(confint(m5))[, 1], # lower ci
+         exp_beta = exp(estimate), # odds ratio, midpoint
+         exp_beta_ulci = exp(confint(m5))[, 2]) %>% # upper 
+  select(term, estimate, exp_beta_llci, exp_beta, exp_beta_ulci) %>% 
+  ggplot(aes(x = term, 
+             y = exp_beta,
+             ymin = exp_beta_llci,
+             ymax = exp_beta_ulci)) +
+  geom_point(size = 4) + 
+  geom_errorbar(width = 0.25) +
+  # add a horizontal line where odds ratio == 1.0 (no effect):
+  geom_hline(yintercept = 1, linetype = "dashed", 
+             size = 1, color = "dodgerblue") + 
+  labs(title = "95% CI: Pass sign up odds by factor",
+       x = NULL,
+       y = "Likehood by Factor (odds ratio, main effect)") + 
+  coord_flip() + # rotates the plot
+  theme_pubr()
+
+```
+
+## Purchase probability
+```{r}
+ecommerce$base_prob <- predict (m5 , ecommerce , type = "response")
+mean (ecommerce$base_prob)
+head (ecommerce)
+```
+
+## Predicting behavior
+```{r}
+ecommerce$pred_conversion <- 1 * (ecommerce$base_prob >= 0.5)
+head (ecommerce)
+```
+
+## Model evaluation
+```{r}
+table (ecommerce$conversion , ecommerce$pred_conversion)
+
+# Accuracy (or Hit rate)
+
+(20190 + 908) / (20190 + 908 + 3498 + 450)
+
+# Sensitivity (or true postive rate)
+908 / (908 + 3498)
+
+# Specificity (True negative rate)
+20190 / (20190 + 450)
+
+# False positive rate 
+1 - 0.98
+sum (ecommerce$pred_conversion)
+
+# ROC
+rocobj <- roc (ecommerce$conversion ,
+               ecommerce$base_prob)
+
+# area under the curve
+rocobj$auc
+```
+
+## New logit probabilities
+```{r}
+ecommerce_new <- ecommerce
+ecommerce_new$total_pages_visited <- ecommerce_new$total_pages_visited + 1
+ecommerce$new_prob <- predict (m5 , ecommerce_new , type = "response")
+
+mean (ecommerce$base_prob)
+mean (ecommerce$new_prob)
+
+# Lift
+(mean (ecommerce$new_prob) - mean (ecommerce$base_prob)) / mean (ecommerce$base_prob)
+```
+
